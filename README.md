@@ -75,6 +75,13 @@ bash scripts/run_rpc_rawtx_probe.sh
 cat outputs/rpc_rawtx_probe_summary.txt
 ```
 
+Extract and statically inspect the funding sender's PVAC key/cipher:
+
+```bash
+bash scripts/run_sender_pvac_probe.sh
+cat outputs/sender_pvac_probe.txt
+```
+
 ## What this does
 
 - Clones the official challenge repo.
