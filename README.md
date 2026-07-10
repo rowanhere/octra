@@ -34,6 +34,13 @@ bash scripts/run_long_simd.sh
 cat outputs/long_simd.txt
 ```
 
+Deeper static artifact inspection:
+
+```bash
+bash scripts/run_deep_static.sh
+cat outputs/deep_static_probe.txt
+```
+
 ## What this does
 
 - Clones the official challenge repo.
