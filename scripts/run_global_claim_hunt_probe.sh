@@ -9,6 +9,9 @@ RPC_URL="${RPC_URL:-https://octra.network/rpc}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-45}"
 STEALTH_JSON="${STEALTH_JSON:-$OUT/stealth_output_probe.json}"
 MAX_CALLS="${MAX_CALLS:-40}"
+RECENT_LIMIT="${RECENT_LIMIT:-100}"
+RECENT_PAGES="${RECENT_PAGES:-20}"
+DELAY_SECONDS="${DELAY_SECONDS:-0.05}"
 OUT_JSON="$OUT/global_claim_hunt_probe.json"
 OUT_TXT="$OUT/global_claim_hunt_probe.txt"
 
@@ -17,7 +20,7 @@ if [[ ! -f "$STEALTH_JSON" ]]; then
   exit 1
 fi
 
-python3 - "$RPC_URL" "$TIMEOUT_SECONDS" "$STEALTH_JSON" "$MAX_CALLS" "$OUT_JSON" "$OUT_TXT" <<'PY'
+python3 - "$RPC_URL" "$TIMEOUT_SECONDS" "$STEALTH_JSON" "$MAX_CALLS" "$RECENT_LIMIT" "$RECENT_PAGES" "$DELAY_SECONDS" "$OUT_JSON" "$OUT_TXT" <<'PY'
 import hashlib
 import json
 import sys
@@ -26,9 +29,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-rpc_url, timeout_s, stealth_s, max_calls_s, out_json_s, out_txt_s = sys.argv[1:7]
+rpc_url, timeout_s, stealth_s, max_calls_s, recent_limit_s, recent_pages_s, delay_s, out_json_s, out_txt_s = sys.argv[1:10]
 timeout = int(float(timeout_s))
 max_calls = int(max_calls_s)
+recent_limit = int(recent_limit_s)
+recent_pages = int(recent_pages_s)
+delay = float(delay_s)
 stealth_path = Path(stealth_s)
 out_json = Path(out_json_s)
 out_txt = Path(out_txt_s)
@@ -107,6 +113,7 @@ for m in stealth_doc.get("matches", []):
         wanted[cp] = m
 
 methods = [
+    ("octra_recentTransactions", [[recent_limit, i * recent_limit] for i in range(recent_pages)]),
     ("octra_transactions", [[100, 0], [50, 0], []]),
     ("octra_recentTransactions", [[100], [50], []]),
     ("octra_latestTransactions", [[100], [50], []]),
@@ -159,7 +166,7 @@ for method, param_sets in methods:
             if claim_pub in wanted:
                 item["matched_stealth_output"] = wanted[claim_pub]
                 matches.append(item)
-        time.sleep(0.05)
+        time.sleep(delay)
     if len(calls) >= max_calls:
         break
 
@@ -167,6 +174,8 @@ doc = {
     "rpc_url": rpc_url,
     "wanted_claim_pubs": sorted(wanted),
     "call_count": len(calls),
+    "recent_limit": recent_limit,
+    "recent_pages": recent_pages,
     "claim_rows_seen": len(claims_seen),
     "matches": matches,
     "calls": calls,
@@ -177,6 +186,8 @@ lines = [
     f"rpc_url={rpc_url}",
     f"wanted_claim_pubs={len(wanted)}",
     f"call_count={len(calls)}",
+    f"recent_limit={recent_limit}",
+    f"recent_pages={recent_pages}",
     f"claim_rows_seen={len(claims_seen)}",
     f"matches={len(matches)}",
 ]
@@ -199,4 +210,3 @@ print("\n".join(lines))
 print(f"wrote {out_json}")
 print(f"wrote {out_txt}")
 PY
-
