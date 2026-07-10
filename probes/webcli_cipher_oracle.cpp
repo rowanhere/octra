@@ -178,8 +178,15 @@ int main(int argc, char** argv) {
         std::cout << "pk_B=" << pk.prm.B << " m=" << pk.prm.m_bits << " n=" << pk.prm.n_bits << "\n";
         for (int ai = 2; ai < argc; ++ai) {
             fs::path path = argv[ai];
-            auto ctb = read_all(path);
-            Cipher c = pvac_ser::deserialize_cipher(ctb.data(), ctb.size());
+            std::vector<uint8_t> ctb;
+            Cipher c;
+            try {
+                ctb = read_all(path);
+                c = pvac_ser::deserialize_cipher(ctb.data(), ctb.size());
+            } catch (const std::exception& e) {
+                std::cout << "\nfile=" << path.filename().string() << " load_error=" << e.what() << "\n";
+                continue;
+            }
             loaded.push_back({path, ctb.size(), c});
             std::cout << "\nfile=" << path.filename().string() << " raw_bytes=" << ctb.size() << "\n";
             std::cout << "compatible=" << is_cipher_compatible_with_pubkey(pk, c)
