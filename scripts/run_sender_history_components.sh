@@ -319,6 +319,7 @@ export PVAC_CANDIDATES
 
 python3 - "$OUT/sender_history_components.json" "$OUT/sender_history_component_scan.txt" "$OUT" <<'PY'
 import csv
+import hashlib
 import json
 import re
 import sys
@@ -406,6 +407,8 @@ sign_counts = {}
 public_plus = 0
 public_minus = 0
 unknown_rows = []
+stealth_by_claim_pub = {}
+claims_with_secret = []
 for row in rows:
     op_counts[row["op_type"]] = op_counts.get(row["op_type"], 0) + 1
     sign_counts[row["sign"]] = sign_counts.get(row["sign"], 0) + 1
@@ -420,6 +423,33 @@ for row in rows:
             public_minus += amount
     elif row["op_type"] in ("claim", "stealth"):
         unknown_rows.append(row)
+    if row["op_type"] == "stealth" and row.get("claim_pub"):
+        stealth_by_claim_pub[str(row["claim_pub"]).lower()] = row
+    if row["op_type"] == "claim" and row.get("claim_secret"):
+        claims_with_secret.append(row)
+
+claim_links = []
+sender_addr = doc.get("sender_addr", "")
+domain = b"OCTRA_CLAIM_BIND_V1"
+for claim in claims_with_secret:
+    try:
+        secret = bytes.fromhex(str(claim["claim_secret"]))
+    except Exception:
+        continue
+    if len(secret) != 32:
+        continue
+    claim_pub = hashlib.sha256(secret + sender_addr.encode("utf-8") + domain).hexdigest()
+    stealth = stealth_by_claim_pub.get(claim_pub)
+    if stealth:
+        claim_links.append({
+            "claim_offset": claim["offset"],
+            "claim_layer": f"{claim['start_layer']}-{claim['end_layer']}",
+            "claim_tx_hash": claim["tx_hash"],
+            "stealth_offset": stealth["offset"],
+            "stealth_layer": f"{stealth['start_layer']}-{stealth['end_layer']}",
+            "stealth_tx_hash": stealth["tx_hash"],
+            "claim_pub": claim_pub,
+        })
 
 lines = [
     f"sender={doc.get('sender_addr', '')}",
@@ -434,6 +464,7 @@ lines = [
     f"public_decrypt_minus={public_minus}",
     f"public_net={public_plus - public_minus}",
     f"unknown_value_rows={len(unknown_rows)}",
+    f"stealth_claim_links={len(claim_links)}",
     "",
     "layer_range sign offset op_type field amount_raw to output_id claim_pub/secret tx_hash",
 ]
@@ -446,9 +477,23 @@ for row in rows:
         f"{str(link)[:16]} {str(row['tx_hash'])[:16]}"
     )
 
+if claim_links:
+    lines.extend(["", "stealth_claim_links", "claim_offset claim_layer stealth_offset stealth_layer claim_pub tx_hashes"])
+    for link in sorted(claim_links, key=lambda x: int(x["claim_offset"])):
+        lines.append(
+            f"{link['claim_offset']} {link['claim_layer']} "
+            f"{link['stealth_offset']} {link['stealth_layer']} "
+            f"{link['claim_pub'][:16]} "
+            f"{str(link['claim_tx_hash'])[:16]}<-{str(link['stealth_tx_hash'])[:16]}"
+        )
+
+links_path = out / "sender_stealth_claim_links.json"
+links_path.write_text(json.dumps(claim_links, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
 txt_path = out / "sender_component_ledger.txt"
 txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 print(f"wrote {txt_path}")
 print(f"wrote {csv_path}")
+print(f"wrote {links_path}")
 print("\n".join(lines[:9]))
 PY
