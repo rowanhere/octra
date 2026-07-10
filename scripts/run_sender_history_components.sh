@@ -429,6 +429,8 @@ for row in rows:
         claims_with_secret.append(row)
 
 claim_links = []
+unlinked_claims = []
+unclaimed_stealth = set(stealth_by_claim_pub.keys())
 sender_addr = doc.get("sender_addr", "")
 domain = b"OCTRA_CLAIM_BIND_V1"
 for claim in claims_with_secret:
@@ -441,6 +443,7 @@ for claim in claims_with_secret:
     claim_pub = hashlib.sha256(secret + sender_addr.encode("utf-8") + domain).hexdigest()
     stealth = stealth_by_claim_pub.get(claim_pub)
     if stealth:
+        unclaimed_stealth.discard(claim_pub)
         claim_links.append({
             "claim_offset": claim["offset"],
             "claim_layer": f"{claim['start_layer']}-{claim['end_layer']}",
@@ -449,6 +452,14 @@ for claim in claims_with_secret:
             "stealth_layer": f"{stealth['start_layer']}-{stealth['end_layer']}",
             "stealth_tx_hash": stealth["tx_hash"],
             "claim_pub": claim_pub,
+        })
+    else:
+        unlinked_claims.append({
+            "claim_offset": claim["offset"],
+            "claim_layer": f"{claim['start_layer']}-{claim['end_layer']}",
+            "claim_tx_hash": claim["tx_hash"],
+            "derived_claim_pub": claim_pub,
+            "output_id": claim.get("output_id", ""),
         })
 
 lines = [
@@ -465,6 +476,8 @@ lines = [
     f"public_net={public_plus - public_minus}",
     f"unknown_value_rows={len(unknown_rows)}",
     f"stealth_claim_links={len(claim_links)}",
+    f"unlinked_claims={len(unlinked_claims)}",
+    f"unclaimed_stealth_sends={len(unclaimed_stealth)}",
     "",
     "layer_range sign offset op_type field amount_raw to output_id claim_pub/secret tx_hash",
 ]
@@ -487,8 +500,37 @@ if claim_links:
             f"{str(link['claim_tx_hash'])[:16]}<-{str(link['stealth_tx_hash'])[:16]}"
         )
 
+if unlinked_claims:
+    lines.extend(["", "unlinked_claims", "claim_offset claim_layer output_id derived_claim_pub tx_hash"])
+    for item in sorted(unlinked_claims, key=lambda x: int(x["claim_offset"])):
+        lines.append(
+            f"{item['claim_offset']} {item['claim_layer']} {item['output_id']} "
+            f"{item['derived_claim_pub'][:16]} {str(item['claim_tx_hash'])[:16]}"
+        )
+
+if unclaimed_stealth:
+    lines.extend(["", "unclaimed_stealth_sends", "stealth_offset stealth_layer claim_pub tx_hash"])
+    for cp in sorted(unclaimed_stealth, key=lambda k: int(stealth_by_claim_pub[k]["offset"])):
+        row = stealth_by_claim_pub[cp]
+        lines.append(
+            f"{row['offset']} {row['start_layer']}-{row['end_layer']} "
+            f"{cp[:16]} {str(row['tx_hash'])[:16]}"
+        )
+
 links_path = out / "sender_stealth_claim_links.json"
-links_path.write_text(json.dumps(claim_links, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+links_path.write_text(json.dumps({
+    "links": claim_links,
+    "unlinked_claims": unlinked_claims,
+    "unclaimed_stealth_sends": [
+        {
+            "stealth_offset": stealth_by_claim_pub[cp]["offset"],
+            "stealth_layer": f"{stealth_by_claim_pub[cp]['start_layer']}-{stealth_by_claim_pub[cp]['end_layer']}",
+            "stealth_tx_hash": stealth_by_claim_pub[cp]["tx_hash"],
+            "claim_pub": cp,
+        }
+        for cp in sorted(unclaimed_stealth, key=lambda k: int(stealth_by_claim_pub[k]["offset"]))
+    ],
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 txt_path = out / "sender_component_ledger.txt"
 txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
