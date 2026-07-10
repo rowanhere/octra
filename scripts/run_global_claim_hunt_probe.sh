@@ -74,6 +74,21 @@ def walk(obj):
         for v in obj:
             yield from walk(v)
 
+def first_value_for_key(obj, key):
+    if isinstance(obj, dict):
+        if key in obj:
+            return obj[key]
+        for value in obj.values():
+            found = first_value_for_key(value, key)
+            if found not in (None, ""):
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = first_value_for_key(value, key)
+            if found not in (None, ""):
+                return found
+    return None
+
 def parse_encrypted_data(value):
     if isinstance(value, dict):
         return value
@@ -131,6 +146,8 @@ methods = [
 calls = []
 matches = []
 claims_seen = []
+claim_op_rows = 0
+claim_debug = []
 op_counts = {}
 epoch_min = None
 epoch_max = None
@@ -155,7 +172,23 @@ for method, param_sets in methods:
             except Exception:
                 pass
             ed = parse_encrypted_data(tx.get("encrypted_data"))
-            secret_hex = ed.get("claim_secret")
+            secret_hex = first_value_for_key(ed, "claim_secret")
+            if secret_hex in (None, ""):
+                secret_hex = first_value_for_key(tx, "claim_secret")
+            if op == "claim":
+                claim_op_rows += 1
+                if len(claim_debug) < 20:
+                    enc_preview = tx.get("encrypted_data")
+                    if isinstance(enc_preview, str):
+                        enc_preview = enc_preview[:500]
+                    claim_debug.append({
+                        "from": tx.get("from") or tx.get("address"),
+                        "tx_hash": tx.get("tx_hash") or tx.get("hash"),
+                        "keys": sorted(tx.keys()),
+                        "encrypted_data_preview": enc_preview,
+                        "parsed_encrypted_keys": sorted(ed.keys()) if isinstance(ed, dict) else [],
+                        "secret_found": bool(secret_hex),
+                    })
             if op != "claim" and not secret_hex:
                 continue
             from_addr = str(tx.get("from") or tx.get("address") or "")
@@ -193,7 +226,9 @@ doc = {
     "epoch_min": epoch_min,
     "epoch_max": epoch_max,
     "op_counts": op_counts,
-    "claim_rows_seen": len(claims_seen),
+    "claim_op_rows": claim_op_rows,
+    "claim_secret_rows_seen": len(claims_seen),
+    "claim_debug": claim_debug,
     "matches": matches,
     "calls": calls,
 }
@@ -209,9 +244,18 @@ lines = [
     f"epoch_min={epoch_min}",
     f"epoch_max={epoch_max}",
     "op_counts=" + json.dumps(op_counts, sort_keys=True),
-    f"claim_rows_seen={len(claims_seen)}",
+    f"claim_op_rows={claim_op_rows}",
+    f"claim_secret_rows_seen={len(claims_seen)}",
     f"matches={len(matches)}",
 ]
+for item in claim_debug[:10]:
+    lines.append(
+        "claim_sample "
+        f"tx={str(item.get('tx_hash'))[:16]} from={item.get('from')} "
+        f"secret_found={item.get('secret_found')} keys={','.join(item.get('keys', []))} "
+        f"parsed_keys={','.join(item.get('parsed_encrypted_keys', []))} "
+        f"edata={str(item.get('encrypted_data_preview'))[:220].replace(chr(10), ' ')}"
+    )
 for call in calls:
     if call.get("tx_count") or (call.get("bytes", 0) > 150 and "method not found" not in call.get("response_preview", "").lower()):
         lines.append(
