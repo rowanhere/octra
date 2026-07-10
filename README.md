@@ -41,6 +41,13 @@ bash scripts/run_deep_static.sh
 cat outputs/deep_static_probe.txt
 ```
 
+Pedersen/Ristretto sanity probe:
+
+```bash
+bash scripts/run_pedersen_probe.sh
+cat outputs/pedersen_probe.txt
+```
+
 ## What this does
 
 - Clones the official challenge repo.
