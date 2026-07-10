@@ -48,6 +48,19 @@ bash scripts/run_pedersen_probe.sh
 cat outputs/pedersen_probe.txt
 ```
 
+Low-rate public RPC/oracle sweep:
+
+```bash
+bash scripts/run_rpc_oracle.sh
+cat outputs/rpc_oracle_summary.txt
+```
+
+If the default public RPC rate-limits the VPS too, retry with a longer delay:
+
+```bash
+DELAY_SECONDS=10 bash scripts/run_rpc_oracle.sh
+```
+
 ## What this does
 
 - Clones the official challenge repo.
