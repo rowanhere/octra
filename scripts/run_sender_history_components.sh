@@ -8,6 +8,7 @@ BUILD="$ROOT/build"
 WEBCLI="$WORK/webcli"
 HIST="$OUT/history_ciphers"
 mkdir -p "$WORK" "$OUT" "$BUILD" "$HIST"
+find "$HIST" -maxdepth 1 -type f -name '*.bin' -delete
 
 SENDER_ADDR="${SENDER_ADDR:-oct7xCozDD9JEsbeVpo5C7HXp2BJbKqfmNUHmDDCCTtWcGb}"
 RPC_URL="${RPC_URL:-https://octra.network/rpc}"
@@ -121,17 +122,31 @@ def parse_encrypted_data(value):
         return value
     return {}
 
-def find_cipher_fields(obj):
+def find_cipher_fields(obj, path="root"):
     found = []
     if isinstance(obj, dict):
         for key, value in obj.items():
-            if key in ("cipher", "claim_cipher") and isinstance(value, str) and len(value) > 100:
-                found.append((key, value))
+            child_path = f"{path}.{key}"
+            key_l = str(key).lower()
+            if isinstance(value, str):
+                v = value.strip()
+                looks_hfhe = "hfhe_" in v[:64].lower() or "hfhe_v1|" in v.lower()
+                looks_cipher_key = "cipher" in key_l and len(v) > 100
+                looks_wrapped_blob = len(v) > 1000 and ("|" in v[:64] or v.startswith(("PVAC", "pvac")))
+                if looks_hfhe or looks_cipher_key or looks_wrapped_blob:
+                    found.append((child_path, value))
+                elif len(v) > 0 and v[0] in "{[":
+                    try:
+                        parsed = json.loads(v)
+                    except Exception:
+                        parsed = None
+                    if parsed is not None:
+                        found.extend(find_cipher_fields(parsed, child_path))
             elif isinstance(value, (dict, list)):
-                found.extend(find_cipher_fields(value))
+                found.extend(find_cipher_fields(value, child_path))
     elif isinstance(obj, list):
-        for value in obj:
-            found.extend(find_cipher_fields(value))
+        for i, value in enumerate(obj):
+            found.extend(find_cipher_fields(value, f"{path}[{i}]"))
     return found
 
 doc = {
@@ -178,14 +193,15 @@ for page in range(pages):
         tx_hash = str(tx.get("tx_hash") or tx.get("hash") or f"offset{offset + local_i}")
         op_type = str(tx.get("op_type") or tx.get("type") or "tx")
         ed = parse_encrypted_data(tx.get("encrypted_data"))
-        for field, value in find_cipher_fields(ed):
+        for field, value in find_cipher_fields(ed, "encrypted_data"):
             try:
                 raw, enc = decode_bytes(value)
             except Exception as exc:
                 doc["cipher_files"].append({"tx_hash": tx_hash, "op_type": op_type, "field": field, "decode_error": str(exc), "encoded_len": len(str(value))})
                 continue
             safe_op = re.sub(r"[^A-Za-z0-9_.-]+", "_", op_type)[:32]
-            name = f"{offset + local_i:08d}_{safe_op}_{tx_hash[:12]}_{field}.bin"
+            safe_field = re.sub(r"[^A-Za-z0-9_.-]+", "_", field)[-64:]
+            name = f"{offset + local_i:08d}_{safe_op}_{tx_hash[:12]}_{safe_field}.bin"
             path = hist / name
             path.write_bytes(raw)
             doc["cipher_files"].append({
@@ -254,4 +270,3 @@ fi
   "${CIPHERS[@]}" \
   "$OUT/sender_current_cipher.bin" \
   | tee "$OUT/sender_history_component_scan.txt"
-
