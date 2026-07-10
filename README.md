@@ -68,6 +68,13 @@ bash scripts/run_rpc_deep_oracle.sh
 cat outputs/rpc_deep_oracle_summary.txt
 ```
 
+Probe the funding sender and raw-transaction method variants:
+
+```bash
+bash scripts/run_rpc_rawtx_probe.sh
+cat outputs/rpc_rawtx_probe_summary.txt
+```
+
 ## What this does
 
 - Clones the official challenge repo.
