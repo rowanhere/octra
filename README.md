@@ -61,6 +61,13 @@ If the default public RPC rate-limits the VPS too, retry with a longer delay:
 DELAY_SECONDS=10 bash scripts/run_rpc_oracle.sh
 ```
 
+Expand the public RPC/oracle data into transaction and PVAC metadata:
+
+```bash
+bash scripts/run_rpc_deep_oracle.sh
+cat outputs/rpc_deep_oracle_summary.txt
+```
+
 ## What this does
 
 - Clones the official challenge repo.
