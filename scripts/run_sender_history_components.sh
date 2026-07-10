@@ -149,6 +149,27 @@ def find_cipher_fields(obj, path="root"):
             found.extend(find_cipher_fields(value, f"{path}[{i}]"))
     return found
 
+def compact_value(value, max_len=96):
+    if value in (None, "", [], {}):
+        return ""
+    s = str(value)
+    return s if len(s) <= max_len else s[:max_len]
+
+def tx_amount_raw(tx):
+    value = tx.get("amount_raw")
+    if value in (None, ""):
+        value = tx.get("amount")
+    return compact_value(value)
+
+def encrypted_meta(ed):
+    if not isinstance(ed, dict):
+        return {}
+    keys = (
+        "version", "output_id", "claim_pub", "claim_secret", "stealth_tag",
+        "eph_pub", "enc_amount", "commitment", "amount_commitment",
+    )
+    return {k: compact_value(ed.get(k)) for k in keys if compact_value(ed.get(k))}
+
 doc = {
     "sender_addr": sender,
     "rpc_url": rpc_url,
@@ -193,6 +214,7 @@ for page in range(pages):
         tx_hash = str(tx.get("tx_hash") or tx.get("hash") or f"offset{offset + local_i}")
         op_type = str(tx.get("op_type") or tx.get("type") or "tx")
         ed = parse_encrypted_data(tx.get("encrypted_data"))
+        emeta = encrypted_meta(ed)
         for field, value in find_cipher_fields(ed, "encrypted_data"):
             try:
                 raw, enc = decode_bytes(value)
@@ -214,7 +236,11 @@ for page in range(pages):
                 "encoded_len": len(str(value)),
                 "raw_len": len(raw),
                 "sha256": hashlib.sha256(raw).hexdigest(),
-                "amount_raw": tx.get("amount_raw"),
+                "amount_raw": tx_amount_raw(tx),
+                "from": compact_value(tx.get("from")),
+                "to": compact_value(tx.get("to") or tx.get("to_")),
+                "timestamp": compact_value(tx.get("timestamp")),
+                "encrypted_meta": emeta,
             })
     if page + 1 < pages:
         time.sleep(delay)
@@ -316,6 +342,15 @@ for line in scan_path.read_text(encoding="utf-8", errors="replace").splitlines()
         "offset": meta.get("offset", ""),
         "tx_hash": meta.get("tx_hash", ""),
         "amount_raw": meta.get("amount_raw", ""),
+        "from": meta.get("from", ""),
+        "to": meta.get("to", ""),
+        "timestamp": meta.get("timestamp", ""),
+        "output_id": meta.get("encrypted_meta", {}).get("output_id", ""),
+        "claim_pub": meta.get("encrypted_meta", {}).get("claim_pub", ""),
+        "claim_secret": meta.get("encrypted_meta", {}).get("claim_secret", ""),
+        "stealth_tag": meta.get("encrypted_meta", {}).get("stealth_tag", ""),
+        "enc_amount": meta.get("encrypted_meta", {}).get("enc_amount", ""),
+        "eph_pub": meta.get("encrypted_meta", {}).get("eph_pub", ""),
         "sha256": meta.get("sha256", ""),
         "public_nums": d["public_nums"],
     })
@@ -336,7 +371,9 @@ csv_path = out / "sender_component_ledger.csv"
 with csv_path.open("w", newline="", encoding="utf-8") as f:
     fieldnames = [
         "start_layer", "end_layer", "sign", "layers", "edges", "offset",
-        "op_type", "field", "amount_raw", "tx_hash", "sha256",
+        "op_type", "field", "amount_raw", "from", "to", "timestamp",
+        "output_id", "claim_pub", "claim_secret", "stealth_tag", "enc_amount", "eph_pub",
+        "tx_hash", "sha256",
         "source_file", "public_nums",
     ]
     writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -360,13 +397,15 @@ lines = [
     "op_counts=" + json.dumps(op_counts, sort_keys=True),
     "sign_counts=" + json.dumps(sign_counts, sort_keys=True),
     "",
-    "layer_range sign offset op_type field amount_raw tx_hash",
+    "layer_range sign offset op_type field amount_raw to output_id claim_pub/secret tx_hash",
 ]
 for row in rows:
+    link = row["claim_pub"] or row["claim_secret"] or row["stealth_tag"] or ""
     lines.append(
         f"{row['start_layer']:02d}-{row['end_layer']:02d} {row['sign']} "
         f"{row['offset']} {row['op_type']} {row['field']} "
-        f"{row['amount_raw']} {str(row['tx_hash'])[:16]}"
+        f"{row['amount_raw']} {row['to']} {row['output_id']} "
+        f"{str(link)[:16]} {str(row['tx_hash'])[:16]}"
     )
 
 txt_path = out / "sender_component_ledger.txt"
