@@ -2,6 +2,7 @@
 #include "pvac_serialize.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -77,6 +78,29 @@ static void print_fp(const char* label, Fp x) {
               << std::hex << std::setw(16) << std::setfill('0') << x.lo
               << ":" << std::setw(16) << (x.hi & MASK63)
               << std::dec << std::setfill(' ') << "\n";
+}
+
+static std::vector<uint64_t> parse_candidates() {
+    std::vector<uint64_t> out = {0, 1, 1000, 1000000, 500000000000ULL};
+    const char* env = std::getenv("PVAC_CANDIDATES");
+    if (!env || !*env) return out;
+    std::string s(env);
+    size_t pos = 0;
+    while (pos < s.size()) {
+        size_t next = s.find(',', pos);
+        std::string tok = s.substr(pos, next == std::string::npos ? std::string::npos : next - pos);
+        try {
+            size_t used = 0;
+            unsigned long long v = std::stoull(tok, &used, 10);
+            if (used == tok.size()) out.push_back(static_cast<uint64_t>(v));
+        } catch (...) {
+        }
+        if (next == std::string::npos) break;
+        pos = next + 1;
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
 }
 
 static bool bitvec_eq(const BitVec& a, const BitVec& b) {
@@ -172,10 +196,11 @@ int main(int argc, char** argv) {
         }
         auto pkb = read_all(argv[1]);
         PubKey pk = pvac_ser::deserialize_pubkey(pkb.data(), pkb.size());
-        std::vector<uint64_t> candidates = {0, 1, 1000, 1000000, 500000000000ULL};
+        std::vector<uint64_t> candidates = parse_candidates();
         std::vector<LoadedCipher> loaded;
 
         std::cout << "pk_B=" << pk.prm.B << " m=" << pk.prm.m_bits << " n=" << pk.prm.n_bits << "\n";
+        std::cout << "rcom_candidates=" << candidates.size() << "\n";
         for (int ai = 2; ai < argc; ++ai) {
             fs::path path = argv[ai];
             std::vector<uint8_t> ctb;

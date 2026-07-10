@@ -291,6 +291,26 @@ if [[ "${#CIPHERS[@]}" -eq 0 ]]; then
   exit 0
 fi
 
+PVAC_CANDIDATES="$(python3 - "$OUT/sender_history_components.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+doc = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+vals = {0, 1, 1000, 1000000, 500000000000}
+for item in doc.get("cipher_files", []):
+    if item.get("decode_error"):
+        continue
+    value = item.get("amount_raw")
+    try:
+        vals.add(int(str(value)))
+    except Exception:
+        pass
+print(",".join(str(v) for v in sorted(vals)))
+PY
+)"
+export PVAC_CANDIDATES
+
 "$BUILD/webcli_cipher_oracle" \
   "$OUT/sender_pvac_pubkey.bin" \
   "${CIPHERS[@]}" \
@@ -383,9 +403,23 @@ with csv_path.open("w", newline="", encoding="utf-8") as f:
 
 op_counts = {}
 sign_counts = {}
+public_plus = 0
+public_minus = 0
+unknown_rows = []
 for row in rows:
     op_counts[row["op_type"]] = op_counts.get(row["op_type"], 0) + 1
     sign_counts[row["sign"]] = sign_counts.get(row["sign"], 0) + 1
+    try:
+        amount = int(str(row["amount_raw"]))
+    except Exception:
+        amount = None
+    if row["op_type"] in ("encrypt", "decrypt") and amount is not None:
+        if row["sign"] == "+":
+            public_plus += amount
+        else:
+            public_minus += amount
+    elif row["op_type"] in ("claim", "stealth"):
+        unknown_rows.append(row)
 
 lines = [
     f"sender={doc.get('sender_addr', '')}",
@@ -396,6 +430,10 @@ lines = [
     "missing_windows=" + (",".join(missing_windows) if missing_windows else "none"),
     "op_counts=" + json.dumps(op_counts, sort_keys=True),
     "sign_counts=" + json.dumps(sign_counts, sort_keys=True),
+    f"public_encrypt_plus={public_plus}",
+    f"public_decrypt_minus={public_minus}",
+    f"public_net={public_plus - public_minus}",
+    f"unknown_value_rows={len(unknown_rows)}",
     "",
     "layer_range sign offset op_type field amount_raw to output_id claim_pub/secret tx_hash",
 ]
