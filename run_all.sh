@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$ROOT/work"
 OUT="$ROOT/outputs"
 BUILD="$ROOT/build"
+source "$ROOT/scripts/lib_jobs.sh"
+JOBS_USED="$(job_count)"
 
 mkdir -p "$WORK" "$OUT" "$BUILD"
 
@@ -16,6 +18,7 @@ log() {
   echo "host=$(hostname)"
   echo "date_utc=$(date -u --iso-8601=seconds)"
   echo "nproc=$(nproc)"
+  echo "jobs=$JOBS_USED"
   echo "gcc=$({ gcc --version || true; } | head -n 1)"
   echo "g++=$({ g++ --version || true; } | head -n 1)"
 } > "$OUT/run_summary.txt"
@@ -55,12 +58,15 @@ log "running artifact_probe"
 log "running selected upstream regressions"
 bash "$ROOT/scripts/run_upstream_regressions.sh" | tee "$OUT/upstream_regressions.txt"
 
+log "running multicore stress batch"
+bash "$ROOT/scripts/run_multicore_stress.sh" | tee "$OUT/multicore_stress.txt"
+
 {
   echo
   echo "artifact_probe_exit=0"
   echo "upstream_regressions_exit=0"
+  echo "multicore_stress_exit=0"
   echo "done_utc=$(date -u --iso-8601=seconds)"
 } >> "$OUT/run_summary.txt"
 
 log "done. outputs are in $OUT"
-

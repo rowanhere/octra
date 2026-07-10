@@ -4,11 +4,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PVAC="$ROOT/work/pvac_hfhe_cpp"
 BUILD="$ROOT/build/upstream"
-OUT="$ROOT/outputs/upstream_logs"
+OUT="$ROOT/outputs/multicore_stress_logs"
 source "$ROOT/scripts/lib_jobs.sh"
 JOBS_USED="$(job_count)"
-mkdir -p "$BUILD"
-mkdir -p "$OUT"
+mkdir -p "$BUILD" "$OUT"
+
+if [[ ! -d "$PVAC/.git" ]]; then
+  echo "Run bash run_all.sh first."
+  exit 2
+fi
 
 tests=(
   test_plaintext_oracle
@@ -25,40 +29,38 @@ src_for() {
   esac
 }
 
-echo "pvac_head=$(git -C "$PVAC" rev-parse HEAD)"
-echo "jobs=$JOBS_USED"
-echo "building ${#tests[@]} tests in parallel"
-
 compile_one() {
   local t="$1"
+  local src
   src="$(src_for "$t")"
-  echo "compile $t"
   g++ -std=c++17 -O3 -march=native -I"$PVAC/include" "$src" -o "$BUILD/$t" >"$OUT/$t.compile.log" 2>&1
 }
 
+echo "jobs=$JOBS_USED"
+echo "prebuilding stress tests"
 for t in "${tests[@]}"; do
   run_limited "$JOBS_USED" compile_one "$t"
 done
 wait_all
 
-echo "running tests in parallel"
-run_one() {
-  local t="$1"
+echo "launching $JOBS_USED independent stress jobs"
+run_stress_job() {
+  local id="$1"
+  local t="${tests[$(( id % ${#tests[@]} ))]}"
   {
-    echo "===== $t ====="
+    echo "job=$id test=$t start=$(date -u --iso-8601=seconds)"
     timeout 20m "$BUILD/$t"
-    echo "exit=$?"
-  } >"$OUT/$t.run.log" 2>&1
+    echo "job=$id test=$t exit=$? end=$(date -u --iso-8601=seconds)"
+  } >"$OUT/job_$id.log" 2>&1
 }
 
-for t in "${tests[@]}"; do
-  run_limited "$JOBS_USED" run_one "$t"
+for ((i = 0; i < JOBS_USED; ++i)); do
+  run_limited "$JOBS_USED" run_stress_job "$i"
 done
 wait_all
 
-for t in "${tests[@]}"; do
-  cat "$OUT/$t.compile.log"
-  cat "$OUT/$t.run.log"
+for ((i = 0; i < JOBS_USED; ++i)); do
+  cat "$OUT/job_$i.log"
 done
 
-echo "all selected regressions passed"
+echo "multicore stress passed"

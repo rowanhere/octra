@@ -18,6 +18,13 @@ When it finishes, send back:
 cat outputs/run_summary.txt
 cat outputs/artifact_probe.txt
 cat outputs/upstream_regressions.txt
+cat outputs/multicore_stress.txt
+```
+
+By default it uses `nproc` parallel jobs where possible. To cap or override CPU use:
+
+```bash
+JOBS=32 bash run_all.sh
 ```
 
 Optional longer run:
@@ -33,4 +40,3 @@ cat outputs/long_simd.txt
 - Clones `octra-labs/pvac_hfhe_cpp` and checks out the commit named by the challenge.
 - Builds a read-only artifact probe against the pinned implementation.
 - Runs cheap known-regression probes for the patched oracle/zero/R2/public-linear classes.
-
