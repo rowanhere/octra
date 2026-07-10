@@ -62,15 +62,55 @@ for obj in walk(doc):
         cipher = res.get("cipher") or cipher
         cipher_type = res.get("cipher_type") or cipher_type
 
+def decode_bytes(value):
+    s = str(value).strip()
+    for sep in (",", ":", "|"):
+        if sep in s and not s.startswith("PVAC"):
+            tail = s.rsplit(sep, 1)[-1].strip()
+            if len(tail) > 16:
+                s = tail
+    compact = "".join(s.split())
+    if compact.startswith("0x"):
+        compact = compact[2:]
+    if len(compact) % 2 == 0 and all(c in "0123456789abcdefABCDEF" for c in compact):
+        try:
+            return bytes.fromhex(compact), "hex"
+        except Exception:
+            pass
+    padded = compact + ("=" * ((4 - len(compact) % 4) % 4))
+    attempts = [
+        ("base64_strict", lambda x: base64.b64decode(x, validate=True)),
+        ("base64_relaxed", lambda x: base64.b64decode(x, validate=False)),
+        ("base64_urlsafe", lambda x: base64.urlsafe_b64decode(x)),
+    ]
+    errors = []
+    for label, fn in attempts:
+        try:
+            raw = fn(padded)
+            if raw:
+                return raw, label
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+    raise ValueError("; ".join(errors))
+
 def decode_field(name, value):
     if value is None:
         return None
-    raw = base64.b64decode(value, validate=True)
+    try:
+        raw, encoding = decode_bytes(value)
+    except Exception as exc:
+        return {
+            "field": name,
+            "decode_error": str(exc),
+            "value_len": len(str(value)),
+            "value_prefix": str(value)[:80],
+        }
     path = out / f"sender_{name}.bin"
     path.write_bytes(raw)
     return {
         "field": name,
-        "base64_len": len(value),
+        "encoding": encoding,
+        "encoded_len": len(str(value)),
         "raw_len": len(raw),
         "sha256": hashlib.sha256(raw).hexdigest(),
         "prefix_hex": raw[:16].hex(),
@@ -91,6 +131,11 @@ summary["fields"] = [x for x in summary["fields"] if x]
 (out / "sender_pvac_extract.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 print(json.dumps(summary, indent=2, sort_keys=True))
 PY
+
+if [[ ! -s "$OUT/sender_pvac_pubkey.bin" || ! -s "$OUT/sender_cipher.bin" ]]; then
+  echo "sender PVAC pubkey or cipher did not decode; inspect $OUT/sender_pvac_extract.json"
+  exit 1
+fi
 
 cat > "$BUILD/sender_pvac_probe.cpp" <<'CPP'
 #include <pvac/pvac.hpp>
