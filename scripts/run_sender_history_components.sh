@@ -270,3 +270,108 @@ fi
   "${CIPHERS[@]}" \
   "$OUT/sender_current_cipher.bin" \
   | tee "$OUT/sender_history_component_scan.txt"
+
+python3 - "$OUT/sender_history_components.json" "$OUT/sender_history_component_scan.txt" "$OUT" <<'PY'
+import csv
+import json
+import re
+import sys
+from pathlib import Path
+
+doc_path = Path(sys.argv[1])
+scan_path = Path(sys.argv[2])
+out = Path(sys.argv[3])
+
+doc = json.loads(doc_path.read_text(encoding="utf-8"))
+by_file = {}
+for item in doc.get("cipher_files", []):
+    path = item.get("path")
+    if path and not item.get("decode_error"):
+        by_file[Path(path).name] = item
+
+rx = re.compile(
+    r"^component_match source=(?P<source>\S+) target=(?P<target>\S+) "
+    r"start_layer=(?P<start>\d+) layers=(?P<layers>\d+) edges=(?P<edges>\d+) "
+    r"sign=(?P<sign>[+-]) public_nums=(?P<public_nums>.*)$"
+)
+
+rows = []
+for line in scan_path.read_text(encoding="utf-8", errors="replace").splitlines():
+    m = rx.match(line)
+    if not m:
+        continue
+    d = m.groupdict()
+    meta = by_file.get(d["source"], {})
+    start = int(d["start"])
+    layers = int(d["layers"])
+    rows.append({
+        "start_layer": start,
+        "end_layer": start + layers - 1,
+        "sign": d["sign"],
+        "layers": layers,
+        "edges": int(d["edges"]),
+        "source_file": d["source"],
+        "op_type": meta.get("op_type", ""),
+        "field": meta.get("field", ""),
+        "offset": meta.get("offset", ""),
+        "tx_hash": meta.get("tx_hash", ""),
+        "amount_raw": meta.get("amount_raw", ""),
+        "sha256": meta.get("sha256", ""),
+        "public_nums": d["public_nums"],
+    })
+
+rows.sort(key=lambda r: r["start_layer"])
+covered = set()
+for row in rows:
+    covered.update(range(row["start_layer"], row["end_layer"] + 1))
+
+max_layer = max(covered) if covered else -1
+missing_layers = [i for i in range(max_layer + 1) if i not in covered]
+missing_windows = []
+for i in range(0, max_layer + 1, 2):
+    if i not in covered or i + 1 not in covered:
+        missing_windows.append(f"{i}-{i+1}")
+
+csv_path = out / "sender_component_ledger.csv"
+with csv_path.open("w", newline="", encoding="utf-8") as f:
+    fieldnames = [
+        "start_layer", "end_layer", "sign", "layers", "edges", "offset",
+        "op_type", "field", "amount_raw", "tx_hash", "sha256",
+        "source_file", "public_nums",
+    ]
+    writer = csv.DictWriter(f, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: row.get(k, "") for k in fieldnames})
+
+op_counts = {}
+sign_counts = {}
+for row in rows:
+    op_counts[row["op_type"]] = op_counts.get(row["op_type"], 0) + 1
+    sign_counts[row["sign"]] = sign_counts.get(row["sign"], 0) + 1
+
+lines = [
+    f"sender={doc.get('sender_addr', '')}",
+    f"component_rows={len(rows)}",
+    f"covered_layers={len(covered)}",
+    f"max_layer={max_layer}",
+    "missing_layers=" + (",".join(map(str, missing_layers)) if missing_layers else "none"),
+    "missing_windows=" + (",".join(missing_windows) if missing_windows else "none"),
+    "op_counts=" + json.dumps(op_counts, sort_keys=True),
+    "sign_counts=" + json.dumps(sign_counts, sort_keys=True),
+    "",
+    "layer_range sign offset op_type field amount_raw tx_hash",
+]
+for row in rows:
+    lines.append(
+        f"{row['start_layer']:02d}-{row['end_layer']:02d} {row['sign']} "
+        f"{row['offset']} {row['op_type']} {row['field']} "
+        f"{row['amount_raw']} {str(row['tx_hash'])[:16]}"
+    )
+
+txt_path = out / "sender_component_ledger.txt"
+txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print(f"wrote {txt_path}")
+print(f"wrote {csv_path}")
+print("\n".join(lines[:9]))
+PY
