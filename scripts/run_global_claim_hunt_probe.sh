@@ -11,6 +11,7 @@ STEALTH_JSON="${STEALTH_JSON:-$OUT/stealth_output_probe.json}"
 MAX_CALLS="${MAX_CALLS:-40}"
 RECENT_LIMIT="${RECENT_LIMIT:-100}"
 RECENT_PAGES="${RECENT_PAGES:-20}"
+RECENT_OFFSET_START="${RECENT_OFFSET_START:-0}"
 DELAY_SECONDS="${DELAY_SECONDS:-0.05}"
 OUT_JSON="$OUT/global_claim_hunt_probe.json"
 OUT_TXT="$OUT/global_claim_hunt_probe.txt"
@@ -20,7 +21,7 @@ if [[ ! -f "$STEALTH_JSON" ]]; then
   exit 1
 fi
 
-python3 - "$RPC_URL" "$TIMEOUT_SECONDS" "$STEALTH_JSON" "$MAX_CALLS" "$RECENT_LIMIT" "$RECENT_PAGES" "$DELAY_SECONDS" "$OUT_JSON" "$OUT_TXT" <<'PY'
+python3 - "$RPC_URL" "$TIMEOUT_SECONDS" "$STEALTH_JSON" "$MAX_CALLS" "$RECENT_LIMIT" "$RECENT_PAGES" "$RECENT_OFFSET_START" "$DELAY_SECONDS" "$OUT_JSON" "$OUT_TXT" <<'PY'
 import hashlib
 import json
 import sys
@@ -29,11 +30,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-rpc_url, timeout_s, stealth_s, max_calls_s, recent_limit_s, recent_pages_s, delay_s, out_json_s, out_txt_s = sys.argv[1:10]
+rpc_url, timeout_s, stealth_s, max_calls_s, recent_limit_s, recent_pages_s, recent_offset_start_s, delay_s, out_json_s, out_txt_s = sys.argv[1:11]
 timeout = int(float(timeout_s))
 max_calls = int(max_calls_s)
 recent_limit = int(recent_limit_s)
 recent_pages = int(recent_pages_s)
+recent_offset_start = int(recent_offset_start_s)
 delay = float(delay_s)
 stealth_path = Path(stealth_s)
 out_json = Path(out_json_s)
@@ -113,7 +115,7 @@ for m in stealth_doc.get("matches", []):
         wanted[cp] = m
 
 methods = [
-    ("octra_recentTransactions", [[recent_limit, i * recent_limit] for i in range(recent_pages)]),
+    ("octra_recentTransactions", [[recent_limit, recent_offset_start + i * recent_limit] for i in range(recent_pages)]),
     ("octra_transactions", [[100, 0], [50, 0], []]),
     ("octra_recentTransactions", [[100], [50], []]),
     ("octra_latestTransactions", [[100], [50], []]),
@@ -129,6 +131,9 @@ methods = [
 calls = []
 matches = []
 claims_seen = []
+op_counts = {}
+epoch_min = None
+epoch_max = None
 req_id = 1
 
 for method, param_sets in methods:
@@ -141,6 +146,14 @@ for method, param_sets in methods:
         calls.append({k: call.get(k) for k in ("ok", "http_status", "elapsed_ms", "bytes", "error")} | {"method": method, "params": params, "tx_count": len(txs), "response_preview": json.dumps(call.get("response"), sort_keys=True)[:500] if call.get("response") is not None else ""})
         for tx in txs:
             op = str(tx.get("op_type") or tx.get("type") or "")
+            if op:
+                op_counts[op] = op_counts.get(op, 0) + 1
+            try:
+                epoch = int(tx.get("epoch") if tx.get("epoch") is not None else tx.get("epoch_id"))
+                epoch_min = epoch if epoch_min is None else min(epoch_min, epoch)
+                epoch_max = epoch if epoch_max is None else max(epoch_max, epoch)
+            except Exception:
+                pass
             ed = parse_encrypted_data(tx.get("encrypted_data"))
             secret_hex = ed.get("claim_secret")
             if op != "claim" and not secret_hex:
@@ -176,6 +189,10 @@ doc = {
     "call_count": len(calls),
     "recent_limit": recent_limit,
     "recent_pages": recent_pages,
+    "recent_offset_start": recent_offset_start,
+    "epoch_min": epoch_min,
+    "epoch_max": epoch_max,
+    "op_counts": op_counts,
     "claim_rows_seen": len(claims_seen),
     "matches": matches,
     "calls": calls,
@@ -188,6 +205,10 @@ lines = [
     f"call_count={len(calls)}",
     f"recent_limit={recent_limit}",
     f"recent_pages={recent_pages}",
+    f"recent_offset_start={recent_offset_start}",
+    f"epoch_min={epoch_min}",
+    f"epoch_max={epoch_max}",
+    "op_counts=" + json.dumps(op_counts, sort_keys=True),
     f"claim_rows_seen={len(claims_seen)}",
     f"matches={len(matches)}",
 ]
